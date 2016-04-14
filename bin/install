@@ -1,0 +1,290 @@
+#!/bin/ksh
+################################################################################
+#
+#	install
+#
+#	- BESCHREIBUNG
+#
+#	Konfigurationsskript fuer das Reporting Framework
+#
+#	- LIZENZ
+#
+#       Copyright (C) 2006 Peter Fabricius
+#
+#       This program is free software; you can redistribute it and/or modify
+#       it under the terms of the GNU General Public License as published by
+#       the Free Software Foundation; either version 2 of the License, or
+#       (at your option) any later version.
+#
+#       This program is distributed in the hope that it will be useful,
+#       but WITHOUT ANY WARRANTY; without even the implied warranty of
+#       MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#       GNU General Public License for more details.
+#
+#       You should have received a copy of the GNU General Public License
+#       along with this program; if not, write to the Free Software
+#       Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#
+#       - KONTAKT
+#       pfabricius@gmx.de
+#
+#	P.Fabricius	26.6.2007	Erstellung
+#			11.10.2007	Umbau auf Kommandozeilenversion
+#			30.10.2007	Bugfixing beim getopts =  d statt d:
+#			1.2.2008	Umbau fuer DBTYPE Unterscheidung
+#			25.4.2008	Zeile 128 raus ( OPTIND )
+#			  		[[ ... ]] nicht verwenden  [ ... ] 
+#					$( ... ) statt ` ... `
+#					in Main : DEBUG=0 vorbesetzen
+#					Zeile 155 : statt 2* PG abzufragen 
+#					auch MY beruecksichtigen
+#					Fehlerhandling
+#					liballg + libdb statt srun
+#	P.Fabricius	14.04.2016	moved DDL SQLs from inst to src dir
+#
+################################################################################
+
+################################################################################
+#
+#       usage
+#
+################################################################################
+_usage() {
+	echo
+	echo "init_jss.ksh"
+	echo
+	echo "Konfigurationsprogramm fuer das JSS Framework"
+	echo "Legt die Hauptkonfigurationsdatei ~/.jssrc "
+	echo "und die fuer das Framework benoetigten Datenbankobjekte"
+	echo "an".
+	echo "Das Skript ist nur fuer die Erstinstallation des "
+	echo "Frameworks notwendig."
+	echo
+	echo "Syntax:"
+	echo "	 ${BASENAME} [-h] [-d] -t <DBTYPE> -D <TGTDIR> -C <DEFAULTDBCONNECT> [-n]"
+	echo "	 ${BASENAME} [-h] [-d] -f <FNAME>"
+	echo 
+	echo "	-h : diese Hilfeseite"
+	echo "  -t : DBTYPE. Datenbanktyp des Repositories, OR, MY"
+        echo "  -d : Debugoption, optional ( Shell set -x )"
+	echo "  -D : Installationsverzeichnis des Frameworks "
+	echo "  -C : Defaultdatenbankconnect"
+	echo "  -n : nicht Anlegen : Steuerflag fuer das Anlegen der Datenbankobjekte"
+	echo "       nicht gesetzt : DB Objekte werden angelegt"
+	echo "       gesetzt : DB Objekte werden nicht angelegt"
+	echo "  -f : Filename optionale Konfigurationsdatei"
+
+        case ${ECODE} in
+		0)	MSG="I: ok" ;;
+		10)	MSG="F: Installationsverzeichnis nicht angegeben" ;;
+		11)	MSG="F: Datenbankconnect nicht angegeben" ;;
+		12)	MSG="F: Konfigurationsdatei nicht vorhanden" ;;
+		13)	MSG="F: Konfigurationsdatei nicht valid" ;;
+		14)	MSG="F: Keine Kommandozeilenparameter bei Angabe von Datei" ;;
+		15)	MSG="F: falscher Datenbanktyp" ;;
+		21)	MSG="F: Sichern der alten Konfiguration" ;;
+		22)	MSG="F: Erstellen der Konfigurationsdatei" ;;
+		23)	MSG="F: Verstecken der Konfigurationsdatei" ;;
+		24)	MSG="F: Einlesen der Konfigurationsdatei " ;;
+		25)	MSG="F: Anlegen der Datenbankobjekte" ;;
+                *) 	MSG="F: unbekannter Fehler aufgetreten" ;;
+        esac
+
+        echo
+        [ ${ECODE} -ne 0 ] && echo "Fehler ${ECODE} --> ${MSG}"
+        echo
+        exit ${ECODE}
+}
+
+################################################################################
+#
+#       parseparms
+#
+#	Zwei Moeglichkeiten der Parameteruebergabe
+#	1. ueber die Kommandozeile
+#		ist selbsterklaerend ueber die usage Ausgabe
+#	2. ueber eine Konfigurationsdatei
+#		die Konfigurationsdatei muss wie folgt 
+#		aussehen :
+#		TGTDIR=<pfad>
+#		DBCONNECT=<user>/<password>@<INSTANZ>
+#		DBTYPE=OR|PG|MY
+#		optional:
+#		NOTCREATE=1
+#		DEBUG=1
+#		
+#	Variante 2 wird ueber die Angabe der -f Option 
+#	in der Kommadozeile angesprochen. 
+#	
+#
+################################################################################
+_parseparms() {
+	[ ${DEBUG:-0} -eq 1 ] && set -x
+        typeset -i EXITCODE=0
+
+        while true ; do
+
+                while getopts hdt:D:C:nf: i ; do
+                        case $i in
+				h)	ECODE=0; _usage ;;
+				d)	DEBUG=1 ;;
+				f)	FNAME=${OPTARG} ;;
+                                D) 	TGTDIR=${OPTARG} ;;
+				C)	DBCONNECT="${OPTARG}" ;;
+				t)	DBTYPE=${OPTARG} ;;
+				n)	NOTCREATE=1 ;;
+                        esac
+                done
+
+		[ ${DEBUG} -eq 1 ] && set -x
+
+		# schauen, ob es eine Konfigurationsdatei 
+		# gibt. Evtl. gleich integrieren
+		#
+		if [ ! -z ${FNAME} ] ; then 
+			# falsche Kommandozeilenparameter ?
+			[ ! -z ${TGTDIR} ] && { ECODE=14; break; }
+			[ ! -z ${DBCONNECT} ] && { ECODE=14; break; }
+
+			# Datei vorhanden ?
+			[ ! -f ${FNAME} ] && { ECODE=12; break; }
+			#  Datei brauchbar ?
+			ksh -n ${FNAME} 2>/dev/null || { ECODE=13; break; }
+			# Datei integrieren
+			. ${FNAME}
+		fi
+
+		# Parameter ok ?
+		#
+                [ -z ${TGTDIR} ] && { ECODE=10; break; }
+                [ -z ${DBCONNECT} ] && { ECODE=11; break; }
+                [ -z ${DBTYPE} ] && { ECODE=15; break; }
+
+		[ "X${DBTYPE}" !=  "XOR" ] && \
+			[ "X${DBTYPE}" !=  "XPG" ] && \
+			[ "X${DBTYPE}" !=  "XMY" ] && { ECODE=15; break; }
+
+                #
+                break
+        done
+
+	# Fehlerhandling 
+	#
+	[ ${ECODE} -ne 0 ] && _usage
+
+        return ${EXITCODE}
+}
+
+
+################################################################################
+#
+#	_mainloop
+#
+#	In der Funktion wird die Hauptkonfigurationsdatei
+#	geschrieben und die notwendigen Datenbankobjekte angelegt.
+#
+#
+################################################################################
+_mainloop() {
+        [ ${DEBUG:-0} -eq 1 ] && set -x
+        typeset MSG OPTARG OPTIND
+
+        while true ; do
+		#	Hauptkonfigurationsdatei erzeugen
+		#
+
+		#	Eine evtl. vorhandene alte Konfigurations
+		#	datei sichern
+		#
+		echo "Konfigurationsdatei ~/.jssrc erzeugen und einbinden ... "
+		[ -f ~/.jssrc ] && {
+			ANZ=$( ls -l ~/.jss*  | wc -l | awk ' { print $1 } ' )
+			mv ~/.jssrc ~/.jssrc_${ANZ} || { ECODE=21; break; }
+		}
+
+		#	Template via sed kopieren
+		#	es muss erst in eine ~/jssrc geschrieben und 
+		#	dann nach ~/.jssrc umkopiert werden, weil 
+		#	eiige Linux Distributionen sonst fehlschlagen
+		#
+		sed -e "s!__TGTDIR__!${TGTDIR}!; \
+			s!__DBUSER__!${DBCONNECT}!; \
+			s!__JSSDBUSER__!${DBCONNECT}!; \
+			s!__JSSDBTYPE__!${DBTYPE}!; \
+			s!__DBTYPE__!${DBTYPE}!; " \
+			${TGTDIR}/etc/jssrc.install > ~/jssrc || { ECODE=22; break; }
+		mv ~/jssrc ~/.jssrc || { ECODE=23; break; }
+
+		#	Die neu erstellte Hauptkonfigurationsdatei
+		#	einlesen als Grundlage fuer den folgenden
+		#	srun Aufruf
+		. ~/.jssrc || { ECODE=24; break; }
+		echo " ... ok!"
+
+		#	Datenbankobjekte anlegen
+		#	wenn nicht die Option NOTCREATE gesetzt ist
+		#	Achtung , doppelte verneinung ;-))
+		#
+		if [ ${NOTCREATE} -eq 0 ] ; then
+
+			echo "Datenbankobjekte anlegen ..." 
+			. ${LIBDIR}/liballg.ksh
+			. ${LIBDIR}/libdb.ksh
+		
+			runsqlfile ${SRCDIR}/sys/${DBTYPE}_reporter.sql || \
+				{ ECODE=25; break; }
+
+			echo " ... ok. Logfile liegt unter ${TGTDIR}/log"
+
+		fi
+
+		#	alles ist gut ??
+
+                #
+                break
+        done
+
+	# Fehlerhandling 
+	#
+	[ ${ECODE} -ne 0 ] && _usage
+
+	return ${ECODE}
+}
+
+################################################################################
+#
+#	Main
+#
+################################################################################
+
+#	globale Variablen vorbelegen
+#
+DBCONNECT=""
+NOTCREATE=0
+TGTDIR=""
+FNAME=""
+DEBUG=0
+typeset -i ECODE=0
+
+#	und los !
+#
+echo 
+echo "JSS Basisinstallation"
+echo
+echo "Starte Installation !"
+
+while true ; do
+	_parseparms "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11" "$12" || \
+		{ ECODE=$?; break; }
+	_mainloop || { ECODE=$?; break; }
+
+	#
+	break
+done
+
+[ ${ECODE} -ne 0 ] && _usage
+
+echo "Installation abgeschlossen !"
+echo
+
+exit 0

@@ -1,0 +1,61 @@
+#
+#	Standard Hauptkonfigurationsdatei
+#	fuer das Reporting Framework
+#
+#	P.Fabricius	26.6.2007	Erstellung
+#	R.Neufeld	11.10.2007	Einfuegen von /usr/xpg4/bin in PATH
+#	P.Fabricius	6.12.2007	umask hinzugefuegt
+#	P.Fabricius	3.1.2008	DBTYPE setzen
+#	P.Fabricius	25.4.2008	DEFAULTDBUSER : Platzhalter in Quotes
+#					DBTYPE mit Platzhalter
+#	P.Fabricius	14.04.2016	remove xpg4 dir
+#					rename scr to src ( SQLDIR ) 
+#					remove umask default ( was project specific )
+#					logtable is now jsslog instead of reportlog
+#					switch language to english
+#
+#
+MYDIR=`pwd`
+cd
+[ -f ~/.profile ] && . ~/.profile >/dev/null 2>&1
+cd ${MYDIR}
+
+
+#
+#	Global variables
+#
+DBTYPE=__DBTYPE__
+DEBUG=0
+SILENT=1
+BASENAME=`basename $0 .ksh`
+HOST=`hostname`
+DEFAULTDATEFMT='YYYY-MM-DD HH24:MI:SS'
+LOGTABLE=jsslog
+
+#
+#	Filesystem Definitions
+#
+BASEDIR=__TGTDIR__
+TMPDIR=${BASEDIR}/tmp
+LOGDIR=${BASEDIR}/log
+DATADIR=${BASEDIR}/data
+BINDIR=${BASEDIR}/bin
+LIBDIR=${BASEDIR}/lib
+SQLDIR=${BASEDIR}/src
+ETCDIR=${BASEDIR}/etc
+SYSTMPDIR=/tmp
+
+#
+PATH=${BINDIR}:${PATH}
+#
+#	DB-Benutzer
+#
+DEFAULTDBUSER='__DBUSER__'
+DWHFLEXUSER=${DEFAULTDBUSER}
+
+
+#
+#	Filenames
+#
+LOGFILE=${LOGDIR}/${BASENAME}_`date '+%Y%m%d'`.log
+
